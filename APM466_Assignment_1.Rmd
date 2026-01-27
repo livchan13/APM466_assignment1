@@ -1,0 +1,388 @@
+---
+title: "APM466_Assignment_1"
+output: pdf_document
+date: "2026-01-10"
+---
+
+
+```{r}
+library(lubridate)
+library(dplyr)
+library(tidyr)
+
+last_coupon_date <- function(maturity_date, obs_date) {
+  d <- maturity_date
+  while (d > obs_date) {
+    d <- d %m-% months(6)
+  }
+  return(d)
+}
+```
+
+
+```{r setup, include=FALSE}
+
+#read bonds data, filter to selected bonds
+data <- read.csv("bonds data copy.csv", check.names = FALSE)
+data_clean <- data %>% 
+  filter(selected == 1) %>% 
+  pivot_longer(
+    cols = -c(length, name, coupon, issue_date, ISIN, selected, maturity_date),
+    names_to = "obs_date",
+    values_to = "clean_price"
+  ) %>%  
+  mutate(obs_date = as.Date(obs_date),
+         maturity_date = as.Date(maturity_date),
+         coupon = coupon * 100
+         ) %>% 
+  select(maturity_date, obs_date, clean_price, coupon)
+
+#calculate last coupon payment, days since last coupon payment, dirty price
+final_data <- data_clean %>% 
+  rowwise() %>%
+  mutate(
+    last_coupon = last_coupon_date(maturity_date, obs_date)
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    days_accrued = as.numeric(obs_date - last_coupon),
+    accrued_interest = coupon * days_accrued / 365,
+    dirty_price = clean_price + accrued_interest
+  )
+```
+
+
+```{r}
+# Number of remaining semi-annual periods
+n_periods <- function(obs_date, maturity_date) {
+  ceiling(as.numeric(maturity_date - obs_date) / 182.5)
+}
+
+# Build cash flows (semi-annual coupon)
+cash_flows <- function(coupon, n) {
+  c(rep(coupon / 2, n - 1), coupon / 2 + 100)
+}
+
+# Compute YTM from dirty price
+compute_ytm <- function(dirty_price, coupon, obs_date, maturity_date, last_coupon) {
+  n <- n_periods(obs_date, maturity_date)
+  cf <- cash_flows(coupon, n)
+  first_pay <- last_coupon %m+% months(6)
+  t_0 <- as.numeric(first_pay - obs_date) / 365
+  t_vec <- t_0 + (seq_along(cf) - 1) * 0.5
+  f <- function(y) sum(cf * exp(-y * t_vec)) - dirty_price
+  
+  uniroot(f, lower = 0, upper = 0.1)$root
+}
+
+
+complete_data <- final_data %>%
+  rowwise() %>%
+  mutate(
+    n = n_periods(obs_date, maturity_date),
+    time_to_maturity = as.numeric(maturity_date - obs_date) / 365,
+    #first_pay = last_coupon %m+% months(6),
+    #t = as.numeric(first_pay - obs_date) / 182.5,
+    ytm = compute_ytm(dirty_price, coupon, obs_date, maturity_date, last_coupon)
+  )%>%
+  ungroup()
+
+yields_df <- complete_data %>% 
+  select(time_to_maturity, ytm, obs_date) %>% 
+  mutate(ytm = ytm * 100)
+```
+
+
+```{r}
+library(ggplot2)
+
+ggplot(yields_df, aes(x = time_to_maturity, y = ytm, color = factor(obs_date), group = obs_date)) +
+  geom_line() +
+  geom_point() +
+  #scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F")) +
+  scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F", "#A52A2A")) +
+  labs(color = "Observation Date")  +
+  labs(
+    title = "Graph 1. Yield Curve by Observation Date",
+    x = "Time to Maturity (years)",
+    y = "Yield to Maturity (%)",
+    color = "Observation Date"
+  ) +
+  theme_minimal() +
+    theme(
+      text = element_text(family = "serif"),
+      plot.title = element_text(size = 14, family = "serif", face = "bold",
+                                margin = margin(b = 5),
+                                hjust = 0),
+      axis.title.x = element_text(size = 12, family = "serif",
+                                  margin = margin(t = 8)),
+      axis.title.y = element_text(size = 12, family = "serif",
+                                  margin = margin(r = 8)),
+      axis.text.x = element_text(size = 11, family = "serif",
+                                 angle = 0, hjust = 0.5,
+                                 color = "black"),
+      axis.text.y = element_text(size = 11, family = "serif",
+                                 color = "black"),
+      legend.title = element_text(size = 11, family = "serif"), 
+      legend.text = element_text(size = 10, family = "serif"),
+      legend.key.size = unit(0.6, "cm"),
+      legend.margin = margin(t = 20, r = 0, b = 0, l = 0)
+    )
+
+ggsave("figure1.pdf", width = 5, height = 3.85)
+```
+
+```{r}
+#Spot Rates
+
+all_dates <- sort(unique(final_data$obs_date))
+spot_rate <- c()
+time <- c()
+date <- as.Date(character())
+
+
+for (i in 1:length(all_dates)) {
+  target_date <- all_dates[i]
+  df <- filter(final_data, obs_date == target_date)
+  df <- arrange(df, maturity_date)
+  coupon_cashflow <- 1/2 * (df$coupon)
+  #print(coupon_cashflow)
+  dirty_price_1 <- df$dirty_price[1]
+  cashflow_1 <- 100 + coupon_cashflow[1]
+  discount_rate_temp <- c(dirty_price_1/ cashflow_1)
+  time_temp <- as.numeric(df$maturity_date - target_date)/365
+  #print(time_temp)
+  
+  for (j in 2:length(df$maturity_date)) {
+    known_value <- sum(discount_rate_temp) * coupon_cashflow[j]
+    #print(known_value)
+    leftover <- (df$dirty_price)[j] - known_value
+    #print(leftover)
+    rate <- leftover/(100 + coupon_cashflow[j])
+    discount_rate_temp <- c(discount_rate_temp, rate)
+    #print(discount_rate_temp)
+  }
+  spot_rate_temp <- -log(discount_rate_temp)/time_temp
+  
+  spot_rate <- c(spot_rate, spot_rate_temp)
+  time <- c(time, time_temp)
+  date <- c(date, rep(target_date, length(df$maturity_date)))
+}
+
+spot_rate_df <- data.frame(spot_rate = spot_rate, time = time, obs_date = date)
+```
+
+
+```{r}
+ggplot(spot_rate_df, aes(x = time, y = spot_rate * 100, color = factor(obs_date), group = obs_date)) +
+  geom_line() +
+  geom_point() +
+  #scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F")) +
+  scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F", "#A52A2A")) +
+  labs(color = "Observation Date")  +
+  labs(
+    title = "Graph 2. Spot Curve by Observation Date",
+    x = "Time to Maturity (years)",
+    y = "Spot Rates (%)",
+    color = "Observation Date"
+  ) +
+  theme_minimal() +
+    theme(
+      text = element_text(family = "serif"),
+      plot.title = element_text(size = 14, family = "serif", face = "bold",
+                                margin = margin(b = 5),
+                                hjust = 0),
+      axis.title.x = element_text(size = 12, family = "serif",
+                                  margin = margin(t = 8)),
+      axis.title.y = element_text(size = 12, family = "serif",
+                                  margin = margin(r = 8)),
+      axis.text.x = element_text(size = 11, family = "serif",
+                                 angle = 0, hjust = 0.5,
+                                 color = "black"),
+      axis.text.y = element_text(size = 11, family = "serif",
+                                 color = "black"),
+      legend.title = element_text(size = 11, family = "serif"), 
+      legend.text = element_text(size = 10, family = "serif"),
+      legend.key.size = unit(0.6, "cm"),
+      legend.margin = margin(t = 20, r = 0, b = 0, l = 0)
+    )
+ggsave("figure2.pdf", width = 5, height = 4.5)
+```
+
+```{r}
+#forward rate
+
+#interpolated spot rates 
+new_spot <- c()
+new_obs_date <- as.Date(character())
+time <- rep(c(1,2,3,4,5),length(all_dates))
+
+for (i in 1:length(all_dates)) {
+  target_date <- all_dates[i]
+  df <- filter(spot_rate_df, obs_date == target_date)
+  df <- arrange(df, time)
+  options <- sort(df$time)
+  spots <- df$spot_rate
+  spots_temp <- c()
+  for (j in 1:5){
+    for (k in 1:length(options)) {
+      if (options[k] >= j) break
+    }
+    #print(k)
+    weight <- (j - options[k-1])/(options[k] - options[k-1])
+    #print(weight)
+    value <- spots[k-1] + weight*(spots[k] - spots[k-1])
+    #print(value)
+    spots_temp <- c(spots_temp, value)
+  }
+  new_obs_date <- c(new_obs_date, rep(target_date, 5))
+  new_spot <- c(new_spot, spots_temp)
+}
+
+final_spots <- data.frame(obs_date = new_obs_date, spot_rate = new_spot, year = time)
+final_spots <- arrange(final_spots, obs_date)
+```
+
+```{r}
+#calculation of forward rates
+
+forward_rates <- c() 
+new_obs_date <- as.Date(character())
+time <- rep(c(1,2,3,4),length(all_dates))
+
+for (i in 1:length(all_dates)) {
+  target_date <- all_dates[i]
+  df <- filter(final_spots, obs_date == target_date)
+  df <- arrange(df, year)
+  temp <- c()
+  spot_rates <- df$spot_rate
+  for (j in 1:4) {
+    value <- (spot_rates[j+1] * (j+1) - spot_rates[1])/j
+    temp <- c(temp, value)
+  }
+  forward_rates <- c(forward_rates, temp)
+  new_obs_date <- c(new_obs_date, rep(target_date, 4))
+}
+forward_df <- data.frame(time_forward = time, obs_date = new_obs_date, forward_rate = forward_rates)
+```
+
+
+```{r}
+ggplot(forward_df, aes(x = time_forward, y = forward_rate * 100, color = factor(obs_date), group = obs_date)) +
+  geom_line() +
+  geom_point() +
+  #scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F")) +
+  scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F", "#A52A2A")) +
+  labs(color = "Observation Date")  +
+  labs(
+    title = "Graph 3. Forward Curve by Observation Date",
+    x = "Years Forward",
+    y = "Forward Rates (%)",
+    color = "Observation Date"
+  ) +
+  theme_minimal() +
+    theme(
+      text = element_text(family = "serif"),
+      plot.title = element_text(size = 14, family = "serif", face = "bold",
+                                margin = margin(b = 5),
+                                hjust = 0),
+      axis.title.x = element_text(size = 12, family = "serif",
+                                  margin = margin(t = 8)),
+      axis.title.y = element_text(size = 12, family = "serif",
+                                  margin = margin(r = 8)),
+      axis.text.x = element_text(size = 11, family = "serif",
+                                 angle = 0, hjust = 0.5,
+                                 color = "black"),
+      axis.text.y = element_text(size = 11, family = "serif",
+                                 color = "black"),
+      legend.title = element_text(size = 11, family = "serif"), 
+      legend.text = element_text(size = 10, family = "serif"),
+      legend.key.size = unit(0.6, "cm"),
+      legend.margin = margin(t = 20, r = 0, b = 0, l = 0)
+    )
+ggsave("figure3.pdf", width = 5, height = 4.5)
+```
+
+
+```{r}
+#covariance matrix (yield)
+
+#linear interpolation 
+new_yield <- c()
+new_obs_date <- as.Date(character())
+time <- rep(c(1,2,3,4,5),length(all_dates))
+
+for (i in 1:length(all_dates)) {
+  target_date <- all_dates[i]
+  df <- filter(yields_df, obs_date == target_date)
+  df <- arrange(df, time_to_maturity)
+  #print(df)
+  options <- sort(df$time_to_maturity)
+  yields <- df$ytm
+  yields_temp <- c()
+  for (j in 1:5){
+    for (k in 1:length(options)) {
+      if (options[k] >= j) break
+    }
+    #print(k)
+    weight <- (j - options[k-1])/(options[k] - options[k-1])
+    #print(weight)
+    value <- yields[k-1] + weight*(yields[k] - yields[k-1])
+    #print(value)
+    yields_temp <- c(yields_temp, value)
+  }
+  new_obs_date <- c(new_obs_date, rep(target_date, 5))
+  new_yield <- c(new_yield, yields_temp)
+}
+
+final_yields <- data.frame(obs_date = new_obs_date, yield = new_yield, year = time)
+final_yields <- arrange(final_yields, year)
+```
+
+
+```{r}
+#yield_return
+num <- length(all_dates)
+yield_return <- data.frame(temp = rep(1,num-1))
+
+for (i in 1:5){
+  df <- filter(final_yields, year == i)
+  df <- arrange(df, obs_date)
+  yield_options <- df$yield
+  log_return_temp <- c()
+  for (j in 1:(nrow(df) - 1)){
+    value <- log(yield_options[j+1]/yield_options[j])
+    log_return_temp <- c(log_return_temp, value)
+    }
+  yield_return[[paste0("year_", i)]] <- log_return_temp  
+  }
+yield_return <- yield_return[,-c(1)]
+
+covariance <- cov(yield_return)
+eigen <- eigen(covariance)
+print(eigen)
+```
+
+```{r}
+#forward return
+num <- length(all_dates)
+forward_return <- data.frame(temp = rep(1,num-1))
+
+for (i in 1:4){
+  df <- filter(forward_df, time_forward == i)
+  df <- arrange(df, obs_date)
+  rate_options <- df$forward_rate
+  log_return_temp <- c()
+  for (j in 1:(nrow(df) - 1)){
+    value <- log(rate_options[j+1]/rate_options[j])
+    log_return_temp <- c(log_return_temp, value)
+    }
+  forward_return[[paste0("1yr_", i, "yr")]] <- log_return_temp  
+  }
+forward_return <- forward_return[,-c(1)]
+
+covariance_forward <- cov(forward_return)
+eigen_forward <- eigen(covariance_forward)
+print(eigen_forward)
+```
+
