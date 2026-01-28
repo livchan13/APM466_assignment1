@@ -103,7 +103,7 @@ ggplot(yields_df, aes(x = time_to_maturity, y = ytm, color = factor(obs_date), g
   scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F", "#A52A2A")) +
   labs(color = "Observation Date")  +
   labs(
-    title = "Graph 1. Yield Curve by Observation Date",
+    title = expression(italic("Graph 1") * ". Yield Curve by Observation Date"),
     x = "Time to Maturity (years)",
     y = "Yield to Maturity (%)",
     color = "Observation Date"
@@ -181,7 +181,7 @@ ggplot(spot_rate_df, aes(x = time, y = spot_rate * 100, color = factor(obs_date)
   scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F", "#A52A2A")) +
   labs(color = "Observation Date")  +
   labs(
-    title = "Graph 2. Spot Curve by Observation Date",
+    title = expression(italic("Graph 2") * ". Spot Curve by Observation Date"),
     x = "Time to Maturity (years)",
     y = "Spot Rates (%)",
     color = "Observation Date"
@@ -275,7 +275,7 @@ ggplot(forward_df, aes(x = time_forward, y = forward_rate * 100, color = factor(
   scale_color_manual(values = c("#1F4E79", "#2E8B57", "#8B0000", "#6A5ACD", "#B8860B", "#D2691E", "#008B8B", "#FF69B4", "#556B2F", "#A52A2A")) +
   labs(color = "Observation Date")  +
   labs(
-    title = "Graph 3. Forward Curve by Observation Date",
+    title = expression(italic("Graph 3") * ". 1-Year Forward Curve by Observation Date"),
     x = "Years Forward",
     y = "Forward Rates (%)",
     color = "Observation Date"
